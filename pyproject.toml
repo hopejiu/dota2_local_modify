@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "dota2-local-change"
+version = "0.1.0"
+description = ""
+authors = ["unknown"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.13"
+vpk = "^1.4.0"
+customtkinter = "^5.2.2"
+vdf = "^3.4"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
