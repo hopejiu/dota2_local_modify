@@ -1,2 +1,7 @@
 __pycache__/
 .idea/
+pak01_dir/
+dist/
+build/
+dota2_modify_config.json
+*.spec

@@ -25,7 +25,8 @@ def get_file_parent_path(file_path: str) -> str:
 
 def unpack_from_vpk(dota2_path: str):
     extract_path = os.path.join(os.path.abspath("."), "pak01_dir\\")
-    shutil.rmtree(extract_path)
+    if os.path.exists(extract_path):
+        shutil.rmtree(extract_path)
     parent = get_file_parent_path(
         get_file_parent_path(get_file_parent_path(dota2_path))
     )

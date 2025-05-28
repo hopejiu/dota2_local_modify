@@ -55,9 +55,12 @@ def unpack_file():
     messagebox.showinfo("提示", "解压完成！")
 
 def package_file():
-    unpack.pack_to_vpk(file_path)
-    unpack.add_local_modify_to_gi(file_path)
-    messagebox.showinfo("提示", "打包完成,享受游戏吧！")
+    warning_str = unpack.pack_to_vpk(file_path)
+    if warning_str:
+        messagebox.showwarning("警告", warning_str)
+    else:
+        unpack.add_local_modify_to_gi(file_path)
+        messagebox.showinfo("提示", "打包完成,享受游戏吧！")
 
 def unpackage_file():
     unpack.remove_local_modify_from_gi(file_path)
