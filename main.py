@@ -1,7 +1,7 @@
 import customtkinter as tk
 from customtkinter import filedialog
 from tkinter import messagebox
-
+import webbrowser
 import unpack
 from unpack import unpack_from_vpk
 import math
@@ -35,9 +35,13 @@ def update_view():
     if file_path:
         text_tips_widget.configure(text_color='black', text="当前已获取文件路径")
         extract_file_button.configure(state=tk.NORMAL)
+        start_game_button.configure(state=tk.NORMAL)
+        open_unpack_dir_button.configure(state=tk.NORMAL)
     else:
         text_tips_widget.configure(text_color='red', text="请选择dota2.exe文件")
         extract_file_button.configure(state=tk.DISABLED)
+        start_game_button.configure(state=tk.DISABLED)
+        open_unpack_dir_button.configure(state=tk.DISABLED)
 
 
 def read_config() -> dict:
@@ -54,6 +58,7 @@ def unpack_file():
     unpack_from_vpk(file_path)
     messagebox.showinfo("提示", "解压完成！")
 
+
 def package_file():
     warning_str = unpack.pack_to_vpk(file_path)
     if warning_str:
@@ -62,9 +67,23 @@ def package_file():
         unpack.add_local_modify_to_gi(file_path)
         messagebox.showinfo("提示", "打包完成,享受游戏吧！")
 
+
 def unpackage_file():
     unpack.remove_local_modify_from_gi(file_path)
     messagebox.showinfo("提示", "还原完成！")
+
+
+def open_unpack_dir():
+    unpack_dir_path = os.path.join(os.path.abspath("."), "pak01_dir\\")
+    if not os.path.isdir(unpack_dir_path):
+        messagebox.showwarning("警告", "路径不存在")
+    else:
+        os.startfile(unpack_dir_path)
+
+
+def start_game():
+    webbrowser.open('steam://run/570')
+
 
 if __name__ == '__main__':
     # 创建主窗口
@@ -100,11 +119,17 @@ if __name__ == '__main__':
     extract_file_button = tk.CTkButton(root, text="解压文件", command=unpack_file)
     extract_file_button.pack(pady=5)  # 垂直方向上留出5像素的填充
 
+    open_unpack_dir_button = tk.CTkButton(root, text="打开解包目录", command=open_unpack_dir)
+    open_unpack_dir_button.pack(pady=5)
+
     package_file_button = tk.CTkButton(root, text="打包文件", command=package_file)
     package_file_button.pack(pady=5)
 
     unpackage_file_button = tk.CTkButton(root, text="还原文件", command=unpackage_file)
     unpackage_file_button.pack(pady=5)
+
+    start_game_button = tk.CTkButton(root, text="启动游戏", command=start_game)
+    start_game_button.pack(pady=5)
     update_view()
     # 运行主循环
     root.mainloop()

@@ -1,9 +1,8 @@
 import os
 import shutil
 
-import vpk
 import vdf
-import json
+import vpk
 
 
 def create_directory(directory_path: str):
