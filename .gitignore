@@ -7,3 +7,4 @@ dota2_modify_config.json
 *.spec
 .codebuddy
 .venv
+dist
