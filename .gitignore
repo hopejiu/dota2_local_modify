@@ -5,3 +5,5 @@ dist/
 build/
 dota2_modify_config.json
 *.spec
+.codebuddy
+.venv

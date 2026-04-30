@@ -1,135 +1,234 @@
-import customtkinter as tk
-from customtkinter import filedialog
-from tkinter import messagebox
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
 import webbrowser
-import unpack
-from unpack import unpack_from_vpk
-import math
 import os
 import json
-
-file_path = ''
-config_file_path = './dota2_modify_config.json'
-key_file_path = 'file_path'
+import data
+import unpack
 
 
-def select_file():
-    """弹出文件选择窗口，并将选定文件的完整路径显示在 Text 组件中。"""
-    select_file_path = filedialog.askopenfilename()
-    if select_file_path:  # 如果用户选择了文件
-        if not select_file_path.endswith("dota2.exe"):
-            messagebox.showerror("错误", "请选择dota2.exe文件！")
-            return None
-        global file_path
-        file_path = select_file_path
-        if os.path.exists(config_file_path):
-            os.remove(config_file_path)
-        with open(config_file_path, 'w', encoding='utf-8') as file:
-            json.dump({key_file_path: file_path}, file)
-        update_view()
-    return None
+CONFIG_FILE_PATH = "./dota2_modify_config.json"
+KEY_FILE_PATH = "file_path"
+
+# 构建 英文名→中文名 反向映射，用于英文搜索
+hero_map_en_to_cn = {v: k for k, v in data.hero_map.items()}
 
 
-def update_view():
-    global file_path
-    if file_path:
-        text_tips_widget.configure(text_color='black', text="当前已获取文件路径")
-        extract_file_button.configure(state=tk.NORMAL)
-        start_game_button.configure(state=tk.NORMAL)
-        open_unpack_dir_button.configure(state=tk.NORMAL)
-    else:
-        text_tips_widget.configure(text_color='red', text="请选择dota2.exe文件")
-        extract_file_button.configure(state=tk.DISABLED)
-        start_game_button.configure(state=tk.DISABLED)
-        open_unpack_dir_button.configure(state=tk.DISABLED)
+class App:
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("Dota2 本地修改工具")
+        self.root.resizable(False, False)
 
+        self.file_path = ""
+        self.dropdown_widget = None
+        self.value_text_widget = None
+        self.text_tips_widget = None
+        self.copy_button = None
+        self.path_label = None
 
-def read_config() -> dict:
-    """判断本地有没有 'dota2_modify_config.json' 文件，有就读取并返回 dict, 否则返回空。"""
+        self._setup_style()
+        self._setup_window()
+        self._create_widgets()
 
-    if os.path.exists(config_file_path):
-        with open(config_file_path, 'r', encoding='utf-8') as file:
-            return json.load(file)
-    else:
+        config_dict = self._read_config()
+        self.file_path = config_dict.get(KEY_FILE_PATH, "")
+        self._update_view()
+
+    def _setup_style(self):
+        self.style = ttk.Style()
+        # Windows 上 vista 主题效果最好
+        available = self.style.theme_names()
+        if "vista" in available:
+            self.style.theme_use("vista")
+        elif "clam" in available:
+            self.style.theme_use("clam")
+
+        # 统一按钮宽度
+        self.style.configure("Action.TButton", width=18)
+        self.style.configure("Small.TButton", width=5)
+
+    def _setup_window(self):
+        window_width = 480
+        window_height = 520
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+        # 设置窗口图标
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.ico")
+        if os.path.exists(icon_path):
+            self.root.iconbitmap(icon_path)
+
+    def _create_widgets(self):
+        # ---- 顶部状态提示 ----
+        self.text_tips_widget = ttk.Label(self.root, text="", font=("", 10))
+        self.text_tips_widget.pack(pady=(15, 5))
+
+        # ---- 文件路径显示 ----
+        self.path_label = ttk.Label(self.root, text="", font=("", 8), foreground="gray")
+        self.path_label.pack(pady=(0, 5))
+
+        # ---- 文件操作区 ----
+        file_frame = ttk.LabelFrame(self.root, text="文件操作", padding=10)
+        file_frame.pack(padx=20, pady=5, fill=tk.X)
+
+        ttk.Button(file_frame, text="选择文件", style="Action.TButton",
+                   command=self._select_file).pack(pady=3)
+        self.extract_file_button = ttk.Button(file_frame, text="解压文件", style="Action.TButton",
+                                              command=self._unpack_file)
+        self.extract_file_button.pack(pady=3)
+        self.open_unpack_dir_button = ttk.Button(file_frame, text="打开解包目录", style="Action.TButton",
+                                                 command=self._open_unpack_dir)
+        self.open_unpack_dir_button.pack(pady=3)
+        self.package_file_button = ttk.Button(file_frame, text="打包文件", style="Action.TButton",
+                                              command=self._package_file)
+        self.package_file_button.pack(pady=3)
+        self.unpackage_file_button = ttk.Button(file_frame, text="还原文件", style="Action.TButton",
+                                                command=self._unpackage_file)
+        self.unpackage_file_button.pack(pady=3)
+
+        # ---- 启动游戏 ----
+        self.start_game_button = ttk.Button(self.root, text="启动游戏", style="Action.TButton",
+                                            command=self._start_game)
+        self.start_game_button.pack(pady=8)
+
+        # ---- 分隔线 ----
+        ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=20, pady=5)
+
+        # ---- 英雄查询区 ----
+        hero_frame = ttk.LabelFrame(self.root, text="英雄查询", padding=10)
+        hero_frame.pack(padx=20, pady=5, fill=tk.X)
+
+        dropdown_row = ttk.Frame(hero_frame)
+        dropdown_row.pack(fill=tk.X, pady=3)
+
+        ttk.Label(dropdown_row, text="选择英雄:").pack(side=tk.LEFT, padx=(0, 5))
+
+        self.dropdown_widget = ttk.Combobox(dropdown_row, values=list(data.hero_map.keys()), width=20)
+        self.dropdown_widget.pack(side=tk.LEFT, padx=(0, 5))
+        self.dropdown_widget.bind("<<ComboboxSelected>>", self._on_dropdown_select)
+        self.dropdown_widget.bind("<KeyRelease>", self._on_dropdown_key_release)
+
+        ttk.Button(dropdown_row, text="×", style="Small.TButton",
+                   command=self._clear_dropdown_input).pack(side=tk.LEFT)
+
+        value_row = ttk.Frame(hero_frame)
+        value_row.pack(fill=tk.X, pady=3)
+
+        self.value_text_widget = ttk.Entry(value_row, width=28, state="readonly")
+        self.value_text_widget.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.copy_button = ttk.Button(value_row, text="复制", style="Small.TButton",
+                                      command=self._copy_to_clipboard)
+        self.copy_button.pack(side=tk.LEFT)
+
+    def run(self):
+        self.root.mainloop()
+
+    def _select_file(self):
+        select_file_path = filedialog.askopenfilename()
+        if select_file_path:
+            if not select_file_path.endswith("dota2.exe"):
+                messagebox.showerror("错误", "请选择dota2.exe文件！")
+                return
+            self.file_path = select_file_path
+            with open(CONFIG_FILE_PATH, "w", encoding="utf-8") as f:
+                json.dump({KEY_FILE_PATH: self.file_path}, f)
+            self._update_view()
+
+    def _update_view(self):
+        if self.file_path:
+            self.text_tips_widget.configure(foreground="green", text="✓ 当前已获取文件路径")
+            self.path_label.configure(text=self.file_path)
+            self.extract_file_button.configure(state=tk.NORMAL)
+            self.start_game_button.configure(state=tk.NORMAL)
+            self.open_unpack_dir_button.configure(state=tk.NORMAL)
+            self.package_file_button.configure(state=tk.NORMAL)
+            self.unpackage_file_button.configure(state=tk.NORMAL)
+        else:
+            self.text_tips_widget.configure(foreground="red", text="✗ 请选择dota2.exe文件")
+            self.path_label.configure(text="")
+            self.extract_file_button.configure(state=tk.DISABLED)
+            self.start_game_button.configure(state=tk.DISABLED)
+            self.open_unpack_dir_button.configure(state=tk.DISABLED)
+            self.package_file_button.configure(state=tk.DISABLED)
+            self.unpackage_file_button.configure(state=tk.DISABLED)
+
+    @staticmethod
+    def _read_config() -> dict:
+        if os.path.exists(CONFIG_FILE_PATH):
+            with open(CONFIG_FILE_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
         return {}
 
+    def _unpack_file(self):
+        unpack.unpack_from_vpk(self.file_path)
+        messagebox.showinfo("提示", "解压完成！")
 
-def unpack_file():
-    unpack_from_vpk(file_path)
-    messagebox.showinfo("提示", "解压完成！")
+    def _package_file(self):
+        if not messagebox.askyesno("确认", "确定要打包文件吗？此操作会修改游戏文件。"):
+            return
+        warning_str = unpack.pack_to_vpk(self.file_path)
+        if warning_str:
+            messagebox.showwarning("警告", warning_str)
+        else:
+            unpack.add_local_modify_to_gi(self.file_path)
+            messagebox.showinfo("提示", "打包完成,享受游戏吧！")
+
+    def _unpackage_file(self):
+        if not messagebox.askyesno("确认", "确定要还原文件吗？此操作会撤销所有本地修改。"):
+            return
+        unpack.remove_local_modify_from_gi(self.file_path)
+        messagebox.showinfo("提示", "还原完成！")
+
+    def _open_unpack_dir(self):
+        unpack_dir_path = os.path.join(os.path.abspath("."), "pak01_dir")
+        if not os.path.isdir(unpack_dir_path):
+            messagebox.showwarning("警告", "路径不存在")
+        else:
+            os.startfile(unpack_dir_path)
+
+    def _start_game(self):
+        webbrowser.open("steam://run/570")
+
+    def _on_dropdown_select(self, event):
+        selected_key = self.dropdown_widget.get()
+        if selected_key in data.hero_map:
+            self.value_text_widget.configure(state=tk.NORMAL)
+            self.value_text_widget.delete(0, tk.END)
+            self.value_text_widget.insert(0, data.hero_map[selected_key])
+            self.value_text_widget.configure(state="readonly")
+
+    def _on_dropdown_key_release(self, event):
+        input_text = self.dropdown_widget.get()
+        if input_text:
+            # 同时支持中文名和英文名搜索
+            filtered_keys = [
+                key for key in data.hero_map.keys()
+                if input_text in key or input_text in data.hero_map[key]
+            ]
+            self.dropdown_widget["values"] = filtered_keys
+        else:
+            self.dropdown_widget["values"] = list(data.hero_map.keys())
+
+    def _clear_dropdown_input(self):
+        self.dropdown_widget.delete(0, tk.END)
+        self.dropdown_widget["values"] = list(data.hero_map.keys())
+        self.value_text_widget.configure(state=tk.NORMAL)
+        self.value_text_widget.delete(0, tk.END)
+        self.value_text_widget.configure(state="readonly")
+
+    def _copy_to_clipboard(self):
+        value = self.value_text_widget.get()
+        if value:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(value)
+            self.copy_button.configure(text="已复制!")
+            self.root.after(1500, lambda: self.copy_button.configure(text="复制"))
 
 
-def package_file():
-    warning_str = unpack.pack_to_vpk(file_path)
-    if warning_str:
-        messagebox.showwarning("警告", warning_str)
-    else:
-        unpack.add_local_modify_to_gi(file_path)
-        messagebox.showinfo("提示", "打包完成,享受游戏吧！")
-
-
-def unpackage_file():
-    unpack.remove_local_modify_from_gi(file_path)
-    messagebox.showinfo("提示", "还原完成！")
-
-
-def open_unpack_dir():
-    unpack_dir_path = os.path.join(os.path.abspath("."), "pak01_dir\\")
-    if not os.path.isdir(unpack_dir_path):
-        messagebox.showwarning("警告", "路径不存在")
-    else:
-        os.startfile(unpack_dir_path)
-
-
-def start_game():
-    webbrowser.open('steam://run/570')
-
-
-if __name__ == '__main__':
-    # 创建主窗口
-    root = tk.CTk()
-    root.title("dota2本地解包打包工具")
-
-    # 获取屏幕宽度和高度
-    screen_width = root.winfo_screenwidth()
-    screen_height = root.winfo_screenheight()
-
-    # 计算窗口大小（屏幕的八分之一）
-    window_width = math.ceil(screen_width / 3)
-    window_height = math.ceil(screen_height / 3)
-
-    # 计算窗口居中位置
-    x = (screen_width - window_width) // 2
-    y = (screen_height - window_height) // 2
-
-    # 设置窗口大小和位置
-    root.geometry(f"{window_width}x{window_height}+{x}+{y}")
-
-    config_dict = read_config()
-    file_path = config_dict.get(key_file_path)
-
-    # 创建 Text 组件
-    text_tips_widget = tk.CTkLabel(root, text='')
-    text_tips_widget.pack(pady=10)  # 垂直方向上留出10像素的填充
-
-    # 创建 Button 组件
-    select_file_button = tk.CTkButton(root, text="选择文件", command=select_file)
-    select_file_button.pack(pady=5)  # 垂直方向上留出5像素的填充
-
-    extract_file_button = tk.CTkButton(root, text="解压文件", command=unpack_file)
-    extract_file_button.pack(pady=5)  # 垂直方向上留出5像素的填充
-
-    open_unpack_dir_button = tk.CTkButton(root, text="打开解包目录", command=open_unpack_dir)
-    open_unpack_dir_button.pack(pady=5)
-
-    package_file_button = tk.CTkButton(root, text="打包文件", command=package_file)
-    package_file_button.pack(pady=5)
-
-    unpackage_file_button = tk.CTkButton(root, text="还原文件", command=unpackage_file)
-    unpackage_file_button.pack(pady=5)
-
-    start_game_button = tk.CTkButton(root, text="启动游戏", command=start_game)
-    start_game_button.pack(pady=5)
-    update_view()
-    # 运行主循环
-    root.mainloop()
+if __name__ == "__main__":
+    App().run()
