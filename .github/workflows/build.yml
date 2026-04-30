@@ -1,4 +1,4 @@
-name: Build EXE
+name: Build and Release
 
 on:
   push:
@@ -26,3 +26,10 @@ jobs:
         with:
           name: dota2_local_change
           path: dist/dota2_local_change.exe
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Build ${{ github.run_number }}
+          files: dist/dota2_local_change.exe

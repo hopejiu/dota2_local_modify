@@ -10,6 +10,16 @@ import unpack
 CONFIG_FILE_PATH = "./dota2_modify_config.json"
 KEY_FILE_PATH = "file_path"
 
+# 自动搜索 dota2.exe 的候选路径
+STEAM_CANDIDATE_DIRS = [
+    r"{drive}:\Program Files (x86)\Steam\steamapps\common\dota 2 beta\game\bin\win64",
+    r"{drive}:\Program Files\Steam\steamapps\common\dota 2 beta\game\bin\win64",
+    r"{drive}:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64",
+    r"{drive}:\Steam\steamapps\common\dota 2 beta\game\bin\win64",
+    r"{drive}:\Games\Steam\steamapps\common\dota 2 beta\game\bin\win64",
+    r"{drive}:\Game\Steam\steamapps\common\dota 2 beta\game\bin\win64",
+]
+
 # 构建 英文名→中文名 反向映射，用于英文搜索
 hero_map_en_to_cn = {v: k for k, v in data.hero_map.items()}
 
@@ -33,6 +43,11 @@ class App:
 
         config_dict = self._read_config()
         self.file_path = config_dict.get(KEY_FILE_PATH, "")
+        # 配置中没有路径时，自动搜索
+        if not self.file_path:
+            self.file_path = self._auto_find_dota2()
+            if self.file_path:
+                self._save_config()
         self._update_view()
 
     def _setup_style(self):
@@ -135,8 +150,7 @@ class App:
                 messagebox.showerror("错误", "请选择dota2.exe文件！")
                 return
             self.file_path = select_file_path
-            with open(CONFIG_FILE_PATH, "w", encoding="utf-8") as f:
-                json.dump({KEY_FILE_PATH: self.file_path}, f)
+            self._save_config()
             self._update_view()
 
     def _update_view(self):
@@ -163,6 +177,21 @@ class App:
             with open(CONFIG_FILE_PATH, "r", encoding="utf-8") as f:
                 return json.load(f)
         return {}
+
+    def _save_config(self):
+        with open(CONFIG_FILE_PATH, "w", encoding="utf-8") as f:
+            json.dump({KEY_FILE_PATH: self.file_path}, f)
+
+    @staticmethod
+    def _auto_find_dota2() -> str:
+        """在 C~E 盘常见 Steam 路径下自动查找 dota2.exe"""
+        for drive in "CDEFG":
+            for template in STEAM_CANDIDATE_DIRS:
+                candidate = template.format(drive=drive)
+                exe_path = os.path.join(candidate, "dota2.exe")
+                if os.path.isfile(exe_path):
+                    return exe_path
+        return ""
 
     def _unpack_file(self):
         unpack.unpack_from_vpk(self.file_path)
