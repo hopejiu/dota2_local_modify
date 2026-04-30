@@ -8,3 +8,4 @@ dota2_modify_config.json
 .codebuddy
 .venv
 dist
+upx/
