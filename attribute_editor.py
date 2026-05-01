@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from hero_constants import HERO_ATTRIBUTES, BASE_DEFAULTS
+from undo_manager import UndoManager
 
 
 class AttributeEditor:
@@ -14,6 +15,9 @@ class AttributeEditor:
         self.original_values = {} # 属性键名 → 原始值
         self._has_changes = False
         self._on_change_callback = on_change_callback  # 外部变更通知回调
+
+        # 撤销/重做
+        self.undo_manager = UndoManager()
 
         # UI 引用
         self.scrollable_frame = None
@@ -77,26 +81,40 @@ class AttributeEditor:
 
                 self.entry_widgets[key] = entry
 
-    def load(self, hero_data: dict):
-        """加载指定英雄的属性到编辑框"""
+    def load(self, hero_data: dict, original_data: dict = None):
+        """加载指定英雄的属性到编辑框
+
+        Args:
+            hero_data: 当前英雄数据（用于填充编辑框）
+            original_data: 原始英雄数据（用于对比变黄，不传则用 hero_data 自身）
+        """
         # 填充属性值（合并 base 默认值），记录原始值
+        ref_data = original_data if original_data is not None else hero_data
         for key, entry in self.entry_widgets.items():
-            value = hero_data.get(key, BASE_DEFAULTS.get(key, ""))
-            str_value = str(value)
-            self.original_values[key] = str_value
+            # 编辑框显示当前值
+            current_value = hero_data.get(key, BASE_DEFAULTS.get(key, ""))
+            str_current = str(current_value)
+            # 原始值用于对比（变黄判断）
+            original_value = ref_data.get(key, BASE_DEFAULTS.get(key, ""))
+            str_original = str(original_value)
+            self.original_values[key] = str_original
 
             entry.configure(state=tk.NORMAL)
             entry.delete(0, tk.END)
-            entry.insert(0, str_value)
+            entry.insert(0, str_current)
 
-            # 重置背景色
-            entry.configure(bg="white")
+            # 根据当前值与原始值是否不同标记背景色
+            if str_current != str_original:
+                entry.configure(bg="#FFFACD")
+                self._has_changes = True
+            else:
+                entry.configure(bg="white")
 
             # 绑定修改检测
             entry.unbind("<KeyRelease>")
             entry.bind("<KeyRelease>", lambda e, k=key: self._on_value_change(k))
 
-        self._has_changes = False
+        self.undo_manager.clear()
 
     def validate(self) -> tuple:
         """校验所有输入值
@@ -136,6 +154,18 @@ class AttributeEditor:
             return
         current = entry.get().strip()
         original = self.original_values.get(key, "")
+
+        # 记录撤销操作（仅当值确实改变时）
+        if current != original and not hasattr(self, '_undoing'):
+            label = self._get_label_for_key(key)
+            old_val = original
+            new_val = current
+            self.undo_manager.push(
+                desc=f"修改{label}: {old_val} → {new_val}",
+                undo_fn=lambda e=entry, k=key, ov=old_val: self._set_entry_value(e, k, ov),
+                redo_fn=lambda e=entry, k=key, nv=new_val: self._set_entry_value(e, k, nv),
+            )
+
         if current != original:
             entry.configure(bg="#FFFACD")  # 淡黄色背景
             self._has_changes = True
@@ -146,6 +176,22 @@ class AttributeEditor:
         # 通知外部
         if self._on_change_callback:
             self._on_change_callback()
+
+    def _set_entry_value(self, entry, key: str, value: str):
+        """设置 Entry 的值（撤销/重做用）"""
+        self._undoing = True
+        entry.delete(0, tk.END)
+        entry.insert(0, value)
+        del self._undoing
+        self._on_value_change(key)
+
+    def undo(self) -> str:
+        """撤销最近一次属性修改"""
+        return self.undo_manager.undo()
+
+    def redo(self) -> str:
+        """重做最近一次属性修改"""
+        return self.undo_manager.redo()
 
     def _check_unsaved_changes(self):
         """检查所有属性是否与原始值相同，更新未保存标记"""

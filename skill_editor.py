@@ -10,6 +10,7 @@ import vpk
 
 from hero_constants import SKILL_EDITABLE_FIELDS, get_pak01_dir, get_hero_skill_file_path
 from skill_constants import get_hero_abilities, extract_skill_field, parse_level_values, join_level_values
+from undo_manager import UndoManager
 import unpack
 
 
@@ -31,6 +32,9 @@ class SkillEditor:
         self._field_entries = {}  # (ability_key, field_name) → [Entry, Entry, ...]
         self._field_info = {}    # (ability_key, field_name) → extract_skill_field 返回的 dict
         self._has_changes = False
+
+        # 撤销/重做
+        self.undo_manager = UndoManager()
 
         # UI 引用
         self.scrollable_frame = None
@@ -101,6 +105,7 @@ class SkillEditor:
         self._field_entries = {}
         self._field_info = {}
         self._has_changes = False
+        self.undo_manager.clear()
 
         # 清空现有内容
         for widget in self._skill_content_frame.winfo_children():
@@ -209,6 +214,63 @@ class SkillEditor:
         self._has_changes = False
         return True, ""
 
+    def save_changes_to_file(self):
+        """将修改写入技能文件（自动保存用，不重置修改标记，静默失败）
+
+        返回: True 成功, False 失败
+        """
+        if not self._current_hero_key:
+            return True
+
+        hero_key = self._current_hero_key
+        skill_data = self._load_skill_file(hero_key)
+        if skill_data is None:
+            return False
+
+        dota_abilities = skill_data.get("DOTAAbilities", {})
+
+        # 备份技能文件
+        self._backup_skill_file(hero_key)
+
+        # 应用修改到技能数据
+        for (ability_key, field_name), entries in self._field_entries.items():
+            ability_data = dota_abilities.get(ability_key)
+            if not ability_data or not isinstance(ability_data, dict):
+                continue
+
+            info = self._field_info.get((ability_key, field_name))
+            if not info or not info["found"]:
+                continue
+
+            # 拼接新值
+            new_values = [e.get().strip() for e in entries]
+            new_value_str = join_level_values(new_values)
+
+            # 根据字段位置写回
+            if info["location"] == "top":
+                ability_data[field_name] = new_value_str
+            elif info["location"] == "ability_values":
+                av_key = info["ability_values_key"]
+                ability_values = ability_data.get("AbilityValues", {})
+                if av_key in ability_values:
+                    if isinstance(ability_values[av_key], dict):
+                        ability_values[av_key]["value"] = new_value_str
+                    else:
+                        ability_values[av_key] = new_value_str
+
+        # 写回文件
+        skill_file_path = get_hero_skill_file_path(hero_key)
+        try:
+            os.makedirs(os.path.dirname(skill_file_path), exist_ok=True)
+            with open(skill_file_path, "w", encoding="utf-8") as f:
+                vdf.dump(skill_data, f, pretty=True)
+        except Exception:
+            return False
+
+        # 更新缓存
+        self._skill_data_cache[hero_key] = skill_data
+        return True
+
     def has_changes(self) -> bool:
         """是否有未保存的修改"""
         return self._has_changes
@@ -217,16 +279,22 @@ class SkillEditor:
         """重置修改标记"""
         self._has_changes = False
 
-    def restore_skill_file(self, hero_key: str) -> tuple:
+    def restore_skill_file(self, hero_key: str, pak=None) -> tuple:
         """从 VPK 重新提取技能文件，恢复到初始状态
+
+        Args:
+            hero_key: 英雄键名
+            pak: 可选的已打开的 VPK 对象，传入则复用，不传则自行打开
 
         返回: (success, error_message)
         """
         skill_file_path = get_hero_skill_file_path(hero_key)
+        should_close = pak is None
         try:
-            parent = unpack.get_game_root_dir(self.file_path)
-            vpk_file_path = os.path.join(parent, "dota", "pak01_dir.vpk")
-            pak = vpk.open(vpk_file_path)
+            if pak is None:
+                parent = unpack.get_game_root_dir(self.file_path)
+                vpk_file_path = os.path.join(parent, "dota", "pak01_dir.vpk")
+                pak = vpk.open(vpk_file_path)
             vpk_skill_path = f"scripts/npc/heroes/{hero_key}.txt"
             if vpk_skill_path in pak:
                 pak_file = pak.get_file(vpk_skill_path)
@@ -245,8 +313,43 @@ class SkillEditor:
 
         except Exception as e:
             return False, f"恢复技能文件失败：{e}"
+        finally:
+            if should_close and pak is not None:
+                try:
+                    pak.close()
+                except Exception:
+                    pass
 
         return True, ""
+
+    def restore_all_skill_files(self, hero_keys: list) -> tuple:
+        """批量从 VPK 重新提取所有技能文件（只打开一次 VPK）
+
+        返回: (restored_count, error_messages)
+        """
+        try:
+            parent = unpack.get_game_root_dir(self.file_path)
+            vpk_file_path = os.path.join(parent, "dota", "pak01_dir.vpk")
+            pak = vpk.open(vpk_file_path)
+        except Exception as e:
+            return 0, [f"打开VPK失败：{e}"]
+
+        restored_count = 0
+        errors = []
+        try:
+            for hero_key in hero_keys:
+                success, err_msg = self.restore_skill_file(hero_key, pak=pak)
+                if success:
+                    restored_count += 1
+                else:
+                    errors.append(err_msg)
+        finally:
+            try:
+                pak.close()
+            except Exception:
+                pass
+
+        return restored_count, errors
 
     # ---- 内部方法 ----
 
@@ -359,7 +462,18 @@ class SkillEditor:
         current_values = [e.get().strip() for e in entries]
         original_values = parse_level_values(info["values"])
 
+        # 记录撤销操作（仅当值确实改变时，且不是撤销/重做触发的）
         changed = current_values != original_values
+        if changed and not hasattr(self, '_undoing'):
+            cn_name = self._get_field_cn_name(field_name)
+            old_vals = list(original_values)
+            new_vals = list(current_values)
+            self.undo_manager.push(
+                desc=f"修改{ability_key}的{cn_name}",
+                undo_fn=lambda es=entries, ak=ability_key, fn=field_name, ov=old_vals: self._set_entries_values(es, ak, fn, ov),
+                redo_fn=lambda es=entries, ak=ability_key, fn=field_name, nv=new_vals: self._set_entries_values(es, ak, fn, nv),
+            )
+
         for entry in entries:
             entry.configure(bg="#FFFACD" if changed else "white")
 
@@ -370,6 +484,23 @@ class SkillEditor:
 
         if self._on_change_callback:
             self._on_change_callback()
+
+    def _set_entries_values(self, entries, ability_key: str, field_name: str, values: list):
+        """设置多个 Entry 的值（撤销/重做用）"""
+        self._undoing = True
+        for entry, val in zip(entries, values):
+            entry.delete(0, tk.END)
+            entry.insert(0, val)
+        del self._undoing
+        self._on_value_change(ability_key, field_name)
+
+    def undo(self) -> str:
+        """撤销最近一次技能修改"""
+        return self.undo_manager.undo()
+
+    def redo(self) -> str:
+        """重做最近一次技能修改"""
+        return self.undo_manager.redo()
 
     def _check_unsaved_changes(self):
         """检查所有字段是否与原始值相同"""
@@ -393,6 +524,8 @@ class SkillEditor:
 
     def _apply_quick_action(self, field_name: str, multiplier: float):
         """对所有技能的指定字段执行乘法快捷操作"""
+        cn_name = self._get_field_cn_name(field_name)
+        count = 0
         for (ak, fn), entries in self._field_entries.items():
             if fn != field_name:
                 continue
@@ -413,11 +546,18 @@ class SkillEditor:
                         new_str = f"{new_val:.4f}".rstrip("0").rstrip(".")
                     entry.delete(0, tk.END)
                     entry.insert(0, new_str)
+                    count += 1
                 except ValueError:
                     continue
 
             # 触发修改检测
             self._on_value_change(ak, fn)
+
+        # 反馈
+        if self._on_change_callback and count > 0:
+            op = "×" if multiplier >= 1 else "÷"
+            factor = multiplier if multiplier >= 1 else 1 / multiplier
+            self._on_change_callback(f"已将所有技能{cn_name}{op}{factor:.1f}（{count}个值）")
 
     def _reset_all_fields(self):
         """将所有字段恢复到原始值"""
@@ -435,7 +575,7 @@ class SkillEditor:
 
         self._has_changes = False
         if self._on_change_callback:
-            self._on_change_callback()
+            self._on_change_callback("已重置所有技能字段到原始值")
 
     def _on_canvas_configure(self, event):
         """Canvas 大小变化时，调整内部 frame 宽度"""

@@ -166,6 +166,19 @@ def is_modified(dota2_path: str) -> bool:
     return "local_modify" in items
 
 
+def is_dota2_running() -> bool:
+    """检测 Dota2 游戏进程是否正在运行"""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq dota2.exe"],
+            capture_output=True, text=True, timeout=5
+        )
+        return "dota2.exe" in result.stdout.lower()
+    except Exception:
+        return False
+
+
 def add_local_modify_to_gi(dota2_path: str):
     gi_path = get_gi_path(dota2_path)
     try:

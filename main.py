@@ -95,13 +95,18 @@ class App:
         self.path_label = ttk.Label(self.root, text="", font=("", 8), foreground="gray")
         self.path_label.pack(pady=(0, 5))
 
-        # ---- 操作引导提示 ----
-        self.guide_label = ttk.Label(
-            self.root,
-            text="操作流程：选择文件 → 解压文件 → 修改配置 → 打包文件 → 启动游戏",
-            font=("", 8), foreground="#666666", wraplength=440
-        )
-        self.guide_label.pack(pady=(0, 5))
+        # ---- 操作引导提示（步骤标签）----
+        self.guide_frame = ttk.Frame(self.root)
+        self.guide_frame.pack(pady=(0, 5))
+        self._step_labels = []
+        steps = ["① 选择文件", "② 解压文件", "③ 修改配置", "④ 打包文件", "⑤ 启动游戏"]
+        for i, step_text in enumerate(steps):
+            lbl = ttk.Label(self.guide_frame, text=step_text, font=("", 9), foreground="#999999")
+            lbl.pack(side=tk.LEFT, padx=4)
+            self._step_labels.append(lbl)
+            if i < len(steps) - 1:
+                ttk.Label(self.guide_frame, text="→", font=("", 9),
+                          foreground="#CCCCCC").pack(side=tk.LEFT, padx=2)
 
         # ---- 文件操作区 ----
         file_frame = ttk.LabelFrame(self.root, text="文件操作", padding=10)
@@ -144,6 +149,29 @@ class App:
         if self.status_var:
             self.status_var.set(text)
 
+    def _update_step_indicator(self, is_unpacked: bool, is_modified: bool):
+        """根据当前状态更新步骤标签颜色"""
+        # 步骤状态：0=选择文件 1=解压 2=修改 3=打包 4=启动
+        colors = ["#999999"] * 5  # 默认灰色
+        if self.file_path:
+            colors[0] = "#4CAF50"  # 绿色=已完成
+            if is_unpacked:
+                colors[1] = "#4CAF50"
+                colors[2] = "#2196F3"  # 蓝色=可操作
+                if is_modified:
+                    colors[2] = "#4CAF50"
+                    colors[3] = "#4CAF50"
+                    colors[4] = "#2196F3"
+                else:
+                    colors[3] = "#2196F3"
+            else:
+                colors[1] = "#2196F3"
+        else:
+            colors[0] = "#2196F3"  # 蓝色=当前步骤
+
+        for i, lbl in enumerate(self._step_labels):
+            lbl.configure(foreground=colors[i])
+
     def _set_busy(self, busy: bool):
         """设置忙碌状态，禁用/启用所有操作按钮"""
         self._busy = busy
@@ -181,6 +209,9 @@ class App:
     def _update_view(self):
         is_unpacked = unpack.is_unpacked()
         is_modified = unpack.is_modified(self.file_path) if self.file_path else False
+
+        # 更新步骤标签颜色
+        self._update_step_indicator(is_unpacked, is_modified)
 
         if self.file_path:
             # 根据解压和修改状态显示不同提示
@@ -333,6 +364,13 @@ class App:
 
     def _package_file(self):
         if self._busy:
+            return
+
+        # 检测游戏是否运行
+        if unpack.is_dota2_running():
+            messagebox.showwarning("无法打包",
+                                   "检测到 Dota2 正在运行！\n\n"
+                                   "请先关闭游戏再进行打包操作。")
             return
 
         if not unpack.is_unpacked():
