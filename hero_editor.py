@@ -47,13 +47,14 @@ class HeroEditorWindow:
     def _create_window(self):
         self.win = tk.Toplevel(self.parent)
         self.win.title("英雄属性编辑")
-        self.win.resizable(False, False)
+        self.win.resizable(True, True)
 
         # 窗口大小和居中（加宽以容纳技能编辑区）
         w, h = 1050, 700
         sx = (self.win.winfo_screenwidth() - w) // 2
         sy = (self.win.winfo_screenheight() - h) // 2
         self.win.geometry(f"{w}x{h}+{sx}+{sy}")
+        self.win.minsize(w, h)
 
         # 图标
         icon_path = os.path.join(unpack.get_app_dir(), "icon.ico")
@@ -95,13 +96,16 @@ class HeroEditorWindow:
             try:
                 unpack.unpack_from_vpk(self.file_path)
             except Exception as e:
-                messagebox.showerror("错误", f"自动解压失败：{e}\n\n请确认 dota2.exe 路径正确，且游戏未在运行。")
+                messagebox.showerror("解压失败",
+                    f"自动解压游戏数据失败，请确认 dota2.exe 路径正确且游戏未在运行。\n\n"
+                    f"详细信息：{e}")
                 self.win.destroy()
                 return
 
         # 检查 npc_heroes.txt 是否存在
         if not os.path.exists(npc_heroes_path):
-            messagebox.showerror("错误", "找不到英雄数据文件。\n\n请先在主界面点击「解压文件」。")
+            messagebox.showerror("找不到数据",
+                "找不到英雄数据文件，请先在主界面点击「解压文件」。")
             self.win.destroy()
             return
 
@@ -112,7 +116,9 @@ class HeroEditorWindow:
             content = unpack.preprocess_vdf_content(content)
             self.heroes_data = vdf.loads(content)
         except Exception as e:
-            messagebox.showerror("错误", f"加载英雄数据失败：{e}\n\n请尝试在主界面重新解压文件。")
+            messagebox.showerror("加载失败",
+                f"加载英雄数据失败，请尝试在主界面重新解压文件。\n\n"
+                f"详细信息：{e}")
             self.win.destroy()
             return
 
@@ -174,8 +180,8 @@ class HeroEditorWindow:
         ttk.Button(batch_frame, text="批量修改", width=18,
                    command=self._open_batch_modify).pack()
 
-        # 重置所有修改按钮
-        ttk.Button(batch_frame, text="重置所有修改", width=18,
+        # 还原全部英雄按钮
+        ttk.Button(batch_frame, text="还原全部英雄", width=18,
                    command=self._reset_all).pack(pady=(3, 0))
 
         # ---- 右侧面板：Notebook（属性 Tab + 技能 Tab）----
@@ -195,10 +201,10 @@ class HeroEditorWindow:
         legend_frame = ttk.Frame(right_frame)
         legend_frame.pack(fill=tk.X, pady=(2, 0))
         legend_label = tk.Label(legend_frame, text="  ■ ", fg="#FFFACD", bg="#FFFACD",
-                                font=("", 8), relief=tk.RIDGE)
+                                font=("", 10), relief=tk.RIDGE, padx=2, pady=1)
         legend_label.pack(side=tk.LEFT)
-        ttk.Label(legend_frame, text=" = 与原始值不同（已自动保存到文件）",
-                  font=("", 8), foreground="gray").pack(side=tk.LEFT)
+        ttk.Label(legend_frame, text=" = 已修改（自动保存到文件，需打包后才在游戏中生效）",
+                  font=("", 9), foreground="gray").pack(side=tk.LEFT)
 
         # 属性 Tab
         attr_tab = ttk.Frame(self.notebook)
@@ -214,17 +220,30 @@ class HeroEditorWindow:
         btn_frame = ttk.Frame(right_frame)
         btn_frame.pack(fill=tk.X, pady=(10, 0))
 
-        self.save_button = ttk.Button(btn_frame, text="应用修改到游戏", width=16,
+        # #14 撤销/重做按钮
+        self._undo_btn = ttk.Button(btn_frame, text="撤销", width=6,
+                                     command=self._do_undo, state=tk.DISABLED)
+        self._undo_btn.pack(side=tk.LEFT, padx=(0, 2))
+        ToolTip(self._undo_btn, "撤销上一步修改 (Ctrl+Z)")
+
+        self._redo_btn = ttk.Button(btn_frame, text="重做", width=6,
+                                     command=self._do_redo, state=tk.DISABLED)
+        self._redo_btn.pack(side=tk.LEFT, padx=(0, 8))
+        ToolTip(self._redo_btn, "重做上一步修改 (Ctrl+Y)")
+
+        # #12 按钮改名
+        self.save_button = ttk.Button(btn_frame, text="保存并打包到游戏", width=16,
                                        command=self._save, state=tk.DISABLED)
         self.save_button.pack(side=tk.LEFT, padx=(0, 5))
-        ToolTip(self.save_button, "将修改写入文件并打包VPK，使修改在游戏中生效")
+        ToolTip(self.save_button, "将修改写入文件并打包，使修改在游戏中生效")
 
         self.open_skill_button = ttk.Button(btn_frame, text="打开技能文件", width=14,
                                              command=self._open_skill_file, state=tk.DISABLED)
         self.open_skill_button.pack(side=tk.LEFT)
         ToolTip(self.open_skill_button, "用外部编辑器打开当前英雄的技能文件")
 
-        self.reset_button = ttk.Button(btn_frame, text="还原英雄数据", width=14,
+        # #15 还原此英雄
+        self.reset_button = ttk.Button(btn_frame, text="还原此英雄", width=14,
                                         command=self._reset_to_original, state=tk.DISABLED)
         self.reset_button.pack(side=tk.RIGHT)
         ToolTip(self.reset_button, "从VPK重新提取原始数据，撤销当前英雄的所有修改")
@@ -315,13 +334,15 @@ class HeroEditorWindow:
 
         # #1: 切换英雄时若有修改，提示已自动保存
         if self.current_hero_key and self._has_any_unsaved_changes():
-            self._set_status("修改已自动保存到文件（尚未打包VPK）")
+            self._set_status("✓ 修改已自动保存到文件（修改需打包后才在游戏中生效）", 5000)
 
         self.current_hero_key = item_key
         self._load_hero_data(item_key)
         self.save_button.configure(state=tk.NORMAL)
         self.open_skill_button.configure(state=tk.NORMAL)
         self.reset_button.configure(state=tk.NORMAL)
+        self._undo_btn.configure(state=tk.NORMAL)
+        self._redo_btn.configure(state=tk.NORMAL)
 
     def _load_hero_data(self, hero_key: str):
         """加载指定英雄的属性和技能"""
@@ -397,7 +418,7 @@ class HeroEditorWindow:
             self._set_status("自动保存失败：技能文件写入失败", 5000)
             return
 
-        self._set_status(status_msg or "已自动保存到文件（尚未打包VPK）")
+        self._set_status(status_msg or "✓ 已自动保存到文件（修改需打包后才在游戏中生效）", 5000)
 
         # 记录修改日志
         en_name = self.current_hero_key.replace("npc_dota_hero_", "")
@@ -416,17 +437,24 @@ class HeroEditorWindow:
 
     def _on_undo(self, event):
         """Ctrl+Z 撤销"""
-        # 优先撤销当前 Tab 的操作
+        self._do_undo()
+
+    def _on_redo(self, event):
+        """Ctrl+Y 重做"""
+        self._do_redo()
+
+    def _do_undo(self):
+        """执行撤销操作"""
         current_tab = self.notebook.index(self.notebook.select())
-        if current_tab == 0:  # 属性 Tab
+        if current_tab == 0:
             desc = self.attr_editor.undo()
-        else:  # 技能 Tab
+        else:
             desc = self.skill_editor.undo()
         if desc:
             self._set_status(f"已撤销: {desc}")
 
-    def _on_redo(self, event):
-        """Ctrl+Y 重做"""
+    def _do_redo(self):
+        """执行重做操作"""
         current_tab = self.notebook.index(self.notebook.select())
         if current_tab == 0:
             desc = self.attr_editor.redo()
@@ -456,6 +484,12 @@ class HeroEditorWindow:
         self._log_text.see(tk.END)
         self._log_text.configure(state=tk.DISABLED)
 
+        # #27 首次添加日志时自动展开
+        if len(self._log_entries) == 1 and not self._log_visible:
+            self._log_visible = True
+            self._log_frame.pack(fill=tk.X, pady=(2, 0))
+            self._log_toggle_btn.configure(text="▼ 修改日志")
+
     def _on_close(self):
         """窗口关闭时，如果有未打包的修改则提示确认"""
         # 取消未执行的自动保存定时器
@@ -466,7 +500,7 @@ class HeroEditorWindow:
         if self._has_any_unsaved_changes():
             if not messagebox.askyesno("确认关闭",
                                        "有修改尚未打包VPK，关闭后修改仍保留在文件中。\n\n"
-                                       "如需在游戏中生效，请重新打开编辑器并点击「应用修改到游戏」。\n\n"
+                                       "如需在游戏中生效，请重新打开编辑器并点击「保存并打包到游戏」。\n\n"
                                        "确定要关闭吗？"):
                 return
         self.win.destroy()
@@ -496,7 +530,9 @@ class HeroEditorWindow:
             current_heroes = self.heroes_data.get("DOTAHeroes", {})
             current_heroes[self.current_hero_key] = dict(backup_hero)
         except Exception as e:
-            messagebox.showerror("错误", f"恢复英雄属性失败：{e}\n\n请尝试在主界面重新解压文件。")
+            messagebox.showerror("还原失败",
+                f"恢复英雄属性失败，请尝试在主界面重新解压文件。\n\n"
+                f"详细信息：{e}")
             return
 
         # 2. 恢复技能文件：从 VPK 重新提取
@@ -512,8 +548,8 @@ class HeroEditorWindow:
 
     def _reset_all(self):
         """重置所有英雄的修改：从备份恢复属性，从VPK恢复技能文件"""
-        if not messagebox.askyesno("确认重置",
-                                   "确定要重置所有英雄的修改吗？\n\n"
+        if not messagebox.askyesno("确认还原",
+                                   "确定要还原全部英雄的修改吗？\n\n"
                                    "此操作将：\n"
                                    "• 从备份恢复 npc_heroes.txt\n"
                                    "• 从VPK重新提取所有技能文件\n\n"
@@ -531,7 +567,9 @@ class HeroEditorWindow:
                 content = unpack.preprocess_vdf_content(content)
                 self.heroes_data = vdf.loads(content)
         except Exception as e:
-            messagebox.showerror("错误", f"恢复属性文件失败：{e}")
+            messagebox.showerror("还原失败",
+                f"恢复属性文件失败，请尝试在主界面重新解压文件。\n\n"
+                f"详细信息：{e}")
             return
 
         # 2. 从VPK批量恢复所有技能文件（只打开一次VPK）
@@ -593,7 +631,9 @@ class HeroEditorWindow:
             with open(npc_heroes_path, "w", encoding="utf-8") as f:
                 vdf.dump(self.heroes_data, f, pretty=True)
         except Exception as e:
-            messagebox.showerror("错误", f"写入文件失败：{e}\n\n请确认文件未被其他程序占用。")
+            messagebox.showerror("写入失败",
+                f"写入文件失败，请确认文件未被其他程序占用。\n\n"
+                f"详细信息：{e}")
             return
 
         # 保存技能到技能文件
@@ -610,7 +650,12 @@ class HeroEditorWindow:
                 return
             unpack.add_local_modify_to_gi(self.file_path)
         except Exception as e:
-            messagebox.showerror("错误", f"打包失败：{e}\n\n请确认游戏未在运行，且以管理员身份运行本程序。")
+            messagebox.showerror("打包失败",
+                f"打包失败，常见原因：\n"
+                f"1. 游戏正在运行（请先关闭游戏）\n"
+                f"2. 需要管理员权限（请右键以管理员身份运行）\n"
+                f"3. 文件被其他程序占用\n\n"
+                f"详细信息：{e}")
             return
 
         # 重置修改标记
@@ -647,19 +692,23 @@ class HeroEditorWindow:
         y = self.win.winfo_y() + (self.win.winfo_height() - h) // 2
         dialog.geometry(f"{w}x{h}+{x}+{y}")
 
-        # 属性选择
+# 属性选择
         ttk.Label(dialog, text="选择属性：", font=("", 10)).pack(anchor=tk.W, padx=15, pady=(15, 5))
 
         attr_var = tk.StringVar()
         attr_combo = ttk.Combobox(dialog, textvariable=attr_var, state="readonly", width=30)
-        attr_options = []
+        # #16 只显示中文标签，key存入映射
+        attr_labels = []
+        attr_key_map = {}  # label → key
         for group_name, attrs in HERO_ATTRIBUTES.items():
             for key, label in attrs:
-                attr_options.append(f"{label} ({key})")
-        attr_combo["values"] = attr_options
-        if attr_options:
+                attr_labels.append(label)
+                attr_key_map[label] = key
+        attr_combo["values"] = attr_labels
+        if attr_labels:
             attr_combo.current(0)
         attr_combo.pack(padx=15, fill=tk.X)
+        ToolTip(attr_combo, attr_key_map.get(attr_labels[0], "") if attr_labels else "")
 
         # 修改方式
         ttk.Label(dialog, text="修改方式：", font=("", 10)).pack(anchor=tk.W, padx=15, pady=(10, 5))
@@ -786,15 +835,19 @@ class HeroEditorWindow:
         btn_frame.pack(pady=(10, 10))
 
         def do_batch():
+            mode_text = {"add": "加/减", "multiply": "乘/除", "set": "设为"}[mode_var.get()]
             try:
                 modify_value = float(value_var.get().strip())
             except ValueError:
                 messagebox.showerror("错误", "请输入有效数字", parent=dialog)
                 return
 
-            # 解析属性 key
-            selected = attr_var.get()
-            attr_key = selected.split("(")[-1].rstrip(")")
+            # #16 从映射获取属性 key
+            selected_label = attr_var.get()
+            attr_key = attr_key_map.get(selected_label, "")
+            if not attr_key:
+                messagebox.showwarning("提示", "请选择一个属性", parent=dialog)
+                return
 
             # 确定范围：从 checkbox 获取选中的英雄
             target_keys = [k for k, v in hero_check_vars.items() if v.get()]
@@ -803,12 +856,85 @@ class HeroEditorWindow:
                 messagebox.showwarning("提示", "请至少选择一个英雄", parent=dialog)
                 return
 
-            # 确认
-            mode_text = {"add": "加/减", "multiply": "乘/除", "set": "设为"}[mode_var.get()]
-            if not messagebox.askyesno("确认",
-                                       f"将对 {len(target_keys)} 个英雄的 \"{selected.split('(')[0].strip()}\" 执行{mode_text}操作\n\n"
-                                       f"确定继续吗？",
-                                       parent=dialog):
+            # #20 批量修改预览：计算改前→改后值，显示预览对话框
+            preview_data = []
+            dota_heroes_preview = self.heroes_data.get("DOTAHeroes", {})
+            for hero_key in target_keys[:20]:  # 最多预览20个
+                hero_data = dota_heroes_preview.get(hero_key, {})
+                if not isinstance(hero_data, dict):
+                    continue
+                current_val = hero_data.get(attr_key, BASE_DEFAULTS.get(attr_key, "0"))
+                try:
+                    current = float(current_val)
+                except (ValueError, TypeError):
+                    continue
+
+                if mode_var.get() == "add":
+                    new_val = current + modify_value
+                elif mode_var.get() == "multiply":
+                    new_val = current * modify_value
+                else:  # set
+                    new_val = modify_value
+
+                if new_val == int(new_val):
+                    new_str = str(int(new_val))
+                else:
+                    new_str = f"{new_val:.6f}".rstrip("0").rstrip(".")
+
+                en_name = hero_key.replace("npc_dota_hero_", "")
+                cn_name = EN_TO_CN.get(en_name, en_name)
+                preview_data.append((cn_name, str(current_val), new_str))
+
+            # 显示预览对话框
+            preview_dialog = tk.Toplevel(dialog)
+            preview_dialog.title("批量修改预览")
+            preview_dialog.resizable(False, False)
+            preview_dialog.transient(dialog)
+            preview_dialog.grab_set()
+            pw, ph = 400, 350
+            px = dialog.winfo_x() + (dialog.winfo_width() - pw) // 2
+            py = dialog.winfo_y() + (dialog.winfo_height() - ph) // 2
+            preview_dialog.geometry(f"{pw}x{ph}+{px}+{py}")
+
+            ttk.Label(preview_dialog, text=f"将对 {len(target_keys)} 个英雄的「{selected_label}」执行{mode_text}操作",
+                       font=("", 10)).pack(padx=10, pady=(10, 5))
+
+            # Treeview 显示预览
+            tree_frame = ttk.Frame(preview_dialog)
+            tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+            tree = ttk.Treeview(tree_frame, columns=("hero", "before", "after"),
+                                show="headings", height=10)
+            tree.heading("hero", text="英雄")
+            tree.heading("before", text="当前值")
+            tree.heading("after", text="修改后")
+            tree.column("hero", width=120)
+            tree.column("before", width=80)
+            tree.column("after", width=80)
+            tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview).pack(side=tk.RIGHT, fill=tk.Y)
+            tree.configure(yscrollcommand=tree_frame.winfo_children()[-1].set)
+
+            for cn_name, before, after in preview_data:
+                tree.insert("", tk.END, values=(cn_name, before, after))
+
+            if len(target_keys) > 20:
+                ttk.Label(preview_dialog, text=f"（仅显示前20个，共{len(target_keys)}个英雄）",
+                           font=("", 8), foreground="gray").pack()
+
+            confirm_result = [False]
+            def on_confirm():
+                confirm_result[0] = True
+                preview_dialog.destroy()
+            def on_cancel():
+                preview_dialog.destroy()
+
+            btn_frame2 = ttk.Frame(preview_dialog)
+            btn_frame2.pack(pady=(5, 10))
+            ttk.Button(btn_frame2, text="确认执行", command=on_confirm).pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_frame2, text="取消", command=on_cancel).pack(side=tk.LEFT, padx=5)
+
+            preview_dialog.wait_window()
+            if not confirm_result[0]:
                 return
 
             # 执行批量修改
@@ -852,9 +978,8 @@ class HeroEditorWindow:
                 self._load_hero_data(self.current_hero_key)
 
             dialog.destroy()
-            attr_name = selected.split('(')[0].strip()
             val_str = value_var.get().strip()
-            self._add_log(f"批量修改：{modified_count} 个英雄的 \"{attr_name}\" {mode_text}{val_str}（已写入文件，尚未打包VPK）")
+            self._add_log(f"批量修改：{modified_count} 个英雄的 \"{selected_label}\" {mode_text}{val_str}（已写入文件，尚未打包VPK）")
             self._set_status(f"批量修改完成：{modified_count} 个英雄已修改（已写入文件，尚未打包VPK）")
 
         ttk.Button(btn_frame, text="执行修改", command=do_batch).pack(side=tk.LEFT, padx=5)

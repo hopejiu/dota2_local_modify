@@ -80,4 +80,5 @@ SKILL_EDITABLE_FIELDS = [
     ("AbilityManaCost", "魔耗"),
     ("AbilityCastRange", "施法距离"),
     ("AbilityDuration", "持续时间"),
+    ("damage", "伤害"),
 ]

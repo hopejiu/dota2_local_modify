@@ -4,7 +4,7 @@ import os
 import shutil
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 import vdf
 import vpk
 
@@ -86,13 +86,18 @@ class SkillEditor:
                              command=lambda f=field, m=multiplier: self._apply_quick_action(f, m))
             btn.pack(side=tk.LEFT, padx=(0, 5))
 
-        self._reset_quick_btn = ttk.Button(self._quick_btn_frame, text="重置修改",
-                                            command=self._reset_all_fields)
-        self._reset_quick_btn.pack(side=tk.RIGHT)
+        # #30 重置按钮移到技能内容区下方
+        self._reset_btn_frame = ttk.Frame(self.scrollable_frame)
+        # 默认在技能内容区之后pack
 
         # 技能内容容器
         self._skill_content_frame = ttk.Frame(self.scrollable_frame)
         self._skill_content_frame.pack(fill=tk.BOTH, expand=True)
+
+        # 重置修改按钮（在技能内容区下方）
+        self._reset_quick_btn = ttk.Button(self._reset_btn_frame, text="重置所有技能修改",
+                                            command=self._reset_all_fields)
+        self._reset_quick_btn.pack(pady=(5, 5))
 
         # 占位提示
         ttk.Label(self._skill_content_frame, text="请选择英雄",
@@ -122,6 +127,9 @@ class SkillEditor:
             return
 
         self._current_abilities = abilities
+
+        # #30 显示重置按钮区域
+        self._reset_btn_frame.pack(fill=tk.X, padx=5, after=self._skill_content_frame)
 
         # 加载技能文件数据
         skill_data = self._load_skill_file(hero_key)
@@ -392,8 +400,16 @@ class SkillEditor:
         title_frame = ttk.Frame(self._skill_content_frame)
         title_frame.pack(fill=tk.X, pady=(10, 2), padx=5)
 
-        ttk.Label(title_frame, text=f"{num}: {ability_key}",
-                  font=("Microsoft YaHei UI", 10, "bold")).pack(anchor=tk.W)
+        num_label = ttk.Label(title_frame, text=f"{num}:",
+                  font=("Microsoft YaHei UI", 10, "bold"))
+        num_label.pack(side=tk.LEFT)
+
+        name_entry = tk.Entry(title_frame, font=("Microsoft YaHei UI", 10, "bold"),
+                              readonlybackground="SystemButtonFace",
+                              bd=0, relief=tk.FLAT)
+        name_entry.insert(0, ability_key)
+        name_entry.configure(state="readonly")
+        name_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # 字段编辑区（带边框）
         fields_frame = ttk.LabelFrame(self._skill_content_frame, padding=5)
@@ -524,7 +540,14 @@ class SkillEditor:
 
     def _apply_quick_action(self, field_name: str, multiplier: float):
         """对所有技能的指定字段执行乘法快捷操作"""
+        # #29 快捷操作确认弹窗
         cn_name = self._get_field_cn_name(field_name)
+        op = "×" if multiplier >= 1 else "÷"
+        factor = multiplier if multiplier >= 1 else 1 / multiplier
+        if not messagebox.askyesno("确认操作",
+                                    f"确定要将所有技能的{cn_name}{op}{factor:.1f}吗？\n\n"
+                                    f"此操作可通过撤销(Ctrl+Z)恢复。"):
+            return
         count = 0
         for (ak, fn), entries in self._field_entries.items():
             if fn != field_name:
@@ -561,6 +584,12 @@ class SkillEditor:
 
     def _reset_all_fields(self):
         """将所有字段恢复到原始值"""
+        # #30 重置修改确认弹窗
+        if not messagebox.askyesno("确认重置",
+                                    "确定要重置所有技能修改吗？\n\n"
+                                    "所有技能参数将恢复到原始值。"):
+            return
+
         for (ak, fn), entries in self._field_entries.items():
             info = self._field_info.get((ak, fn))
             if not info or not info["found"]:
